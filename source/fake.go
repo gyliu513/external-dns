@@ -21,12 +21,13 @@ Note: currently only supports IP targets (A records), not hostname targets
 package source
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"net"
 	"time"
 
-	"github.com/kubernetes-incubator/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/endpoint"
 )
 
 // fakeSource is an implementation of Source that provides dummy endpoints for
@@ -54,8 +55,11 @@ func NewFakeSource(fqdnTemplate string) (Source, error) {
 	}, nil
 }
 
+func (sc *fakeSource) AddEventHandler(ctx context.Context, handler func()) {
+}
+
 // Endpoints returns endpoint objects.
-func (sc *fakeSource) Endpoints() ([]*endpoint.Endpoint, error) {
+func (sc *fakeSource) Endpoints(ctx context.Context) ([]*endpoint.Endpoint, error) {
 	endpoints := make([]*endpoint.Endpoint, 10)
 
 	for i := 0; i < 10; i++ {

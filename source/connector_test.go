@@ -17,13 +17,15 @@ limitations under the License.
 package source
 
 import (
+	"context"
 	"encoding/gob"
 	"net"
 	"testing"
 
-	"github.com/kubernetes-incubator/external-dns/endpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
+
+	"sigs.k8s.io/external-dns/endpoint"
 )
 
 type ConnectorSuite struct {
@@ -123,7 +125,7 @@ func testConnectorSourceEndpoints(t *testing.T) {
 			}
 			cs, _ := NewConnectorSource(ti.serverAddress)
 
-			endpoints, err := cs.Endpoints()
+			endpoints, err := cs.Endpoints(context.Background())
 			if ti.expectError {
 				assert.Error(t, err)
 			} else {

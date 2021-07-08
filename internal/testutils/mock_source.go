@@ -17,9 +17,12 @@ limitations under the License.
 package testutils
 
 import (
+	"context"
+	"time"
+
 	"github.com/stretchr/testify/mock"
 
-	"github.com/kubernetes-incubator/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/endpoint"
 )
 
 // MockSource returns mock endpoints.
@@ -28,7 +31,7 @@ type MockSource struct {
 }
 
 // Endpoints returns the desired mock endpoints.
-func (m *MockSource) Endpoints() ([]*endpoint.Endpoint, error) {
+func (m *MockSource) Endpoints(ctx context.Context) ([]*endpoint.Endpoint, error) {
 	args := m.Called()
 
 	endpoints := args.Get(0)
@@ -37,4 +40,21 @@ func (m *MockSource) Endpoints() ([]*endpoint.Endpoint, error) {
 	}
 
 	return endpoints.([]*endpoint.Endpoint), args.Error(1)
+}
+
+// AddEventHandler adds an event handler that should be triggered if something in source changes
+func (m *MockSource) AddEventHandler(ctx context.Context, handler func()) {
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				handler()
+			}
+		}
+	}()
 }

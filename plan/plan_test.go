@@ -19,22 +19,35 @@ package plan
 import (
 	"testing"
 
-	"github.com/kubernetes-incubator/external-dns/endpoint"
-	"github.com/kubernetes-incubator/external-dns/internal/testutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
+
+	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/internal/testutils"
 )
 
 type PlanTestSuite struct {
 	suite.Suite
-	fooV1Cname             *endpoint.Endpoint
-	fooV2Cname             *endpoint.Endpoint
-	fooV2CnameNoLabel      *endpoint.Endpoint
-	fooV3CnameSameResource *endpoint.Endpoint
-	fooA5                  *endpoint.Endpoint
-	bar127A                *endpoint.Endpoint
-	bar127AWithTTL         *endpoint.Endpoint
-	bar192A                *endpoint.Endpoint
+	fooV1Cname                       *endpoint.Endpoint
+	fooV2Cname                       *endpoint.Endpoint
+	fooV2CnameUppercase              *endpoint.Endpoint
+	fooV2TXT                         *endpoint.Endpoint
+	fooV2CnameNoLabel                *endpoint.Endpoint
+	fooV3CnameSameResource           *endpoint.Endpoint
+	fooA5                            *endpoint.Endpoint
+	bar127A                          *endpoint.Endpoint
+	bar127AWithTTL                   *endpoint.Endpoint
+	bar127AWithProviderSpecificTrue  *endpoint.Endpoint
+	bar127AWithProviderSpecificFalse *endpoint.Endpoint
+	bar127AWithProviderSpecificUnset *endpoint.Endpoint
+	bar192A                          *endpoint.Endpoint
+	multiple1                        *endpoint.Endpoint
+	multiple2                        *endpoint.Endpoint
+	multiple3                        *endpoint.Endpoint
+	domainFilterFiltered1            *endpoint.Endpoint
+	domainFilterFiltered2            *endpoint.Endpoint
+	domainFilterFiltered3            *endpoint.Endpoint
+	domainFilterExcluded             *endpoint.Endpoint
 }
 
 func (suite *PlanTestSuite) SetupTest() {
@@ -64,6 +77,18 @@ func (suite *PlanTestSuite) SetupTest() {
 		Labels: map[string]string{
 			endpoint.ResourceLabelKey: "ingress/default/foo-v2",
 		},
+	}
+	suite.fooV2CnameUppercase = &endpoint.Endpoint{
+		DNSName:    "foo",
+		Targets:    endpoint.Targets{"V2"},
+		RecordType: "CNAME",
+		Labels: map[string]string{
+			endpoint.ResourceLabelKey: "ingress/default/foo-v2",
+		},
+	}
+	suite.fooV2TXT = &endpoint.Endpoint{
+		DNSName:    "foo",
+		RecordType: "TXT",
 	}
 	suite.fooV2CnameNoLabel = &endpoint.Endpoint{
 		DNSName:    "foo",
@@ -95,6 +120,43 @@ func (suite *PlanTestSuite) SetupTest() {
 			endpoint.ResourceLabelKey: "ingress/default/bar-127",
 		},
 	}
+	suite.bar127AWithProviderSpecificTrue = &endpoint.Endpoint{
+		DNSName:    "bar",
+		Targets:    endpoint.Targets{"127.0.0.1"},
+		RecordType: "A",
+		Labels: map[string]string{
+			endpoint.ResourceLabelKey: "ingress/default/bar-127",
+		},
+		ProviderSpecific: endpoint.ProviderSpecific{
+			endpoint.ProviderSpecificProperty{
+				Name:  "external-dns.alpha.kubernetes.io/cloudflare-proxied",
+				Value: "true",
+			},
+		},
+	}
+	suite.bar127AWithProviderSpecificFalse = &endpoint.Endpoint{
+		DNSName:    "bar",
+		Targets:    endpoint.Targets{"127.0.0.1"},
+		RecordType: "A",
+		Labels: map[string]string{
+			endpoint.ResourceLabelKey: "ingress/default/bar-127",
+		},
+		ProviderSpecific: endpoint.ProviderSpecific{
+			endpoint.ProviderSpecificProperty{
+				Name:  "external-dns.alpha.kubernetes.io/cloudflare-proxied",
+				Value: "false",
+			},
+		},
+	}
+	suite.bar127AWithProviderSpecificUnset = &endpoint.Endpoint{
+		DNSName:    "bar",
+		Targets:    endpoint.Targets{"127.0.0.1"},
+		RecordType: "A",
+		Labels: map[string]string{
+			endpoint.ResourceLabelKey: "ingress/default/bar-127",
+		},
+		ProviderSpecific: endpoint.ProviderSpecific{},
+	}
 	suite.bar192A = &endpoint.Endpoint{
 		DNSName:    "bar",
 		Targets:    endpoint.Targets{"192.168.0.1"},
@@ -102,6 +164,44 @@ func (suite *PlanTestSuite) SetupTest() {
 		Labels: map[string]string{
 			endpoint.ResourceLabelKey: "ingress/default/bar-192",
 		},
+	}
+	suite.multiple1 = &endpoint.Endpoint{
+		DNSName:       "multiple",
+		Targets:       endpoint.Targets{"192.168.0.1"},
+		RecordType:    "A",
+		SetIdentifier: "test-set-1",
+	}
+	suite.multiple2 = &endpoint.Endpoint{
+		DNSName:       "multiple",
+		Targets:       endpoint.Targets{"192.168.0.2"},
+		RecordType:    "A",
+		SetIdentifier: "test-set-1",
+	}
+	suite.multiple3 = &endpoint.Endpoint{
+		DNSName:       "multiple",
+		Targets:       endpoint.Targets{"192.168.0.2"},
+		RecordType:    "A",
+		SetIdentifier: "test-set-2",
+	}
+	suite.domainFilterFiltered1 = &endpoint.Endpoint{
+		DNSName:    "foo.domain.tld",
+		Targets:    endpoint.Targets{"1.2.3.4"},
+		RecordType: "A",
+	}
+	suite.domainFilterFiltered2 = &endpoint.Endpoint{
+		DNSName:    "bar.domain.tld",
+		Targets:    endpoint.Targets{"1.2.3.5"},
+		RecordType: "A",
+	}
+	suite.domainFilterFiltered3 = &endpoint.Endpoint{
+		DNSName:    "baz.domain.tld",
+		Targets:    endpoint.Targets{"1.2.3.6"},
+		RecordType: "A",
+	}
+	suite.domainFilterExcluded = &endpoint.Endpoint{
+		DNSName:    "foo.ex.domain.tld",
+		Targets:    endpoint.Targets{"1.1.1.1"},
+		RecordType: "A",
 	}
 }
 
@@ -114,9 +214,10 @@ func (suite *PlanTestSuite) TestSyncFirstRound() {
 	expectedDelete := []*endpoint.Endpoint{}
 
 	p := &Plan{
-		Policies: []Policy{&SyncPolicy{}},
-		Current:  current,
-		Desired:  desired,
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
 	}
 
 	changes := p.Calculate().Changes
@@ -135,9 +236,10 @@ func (suite *PlanTestSuite) TestSyncSecondRound() {
 	expectedDelete := []*endpoint.Endpoint{}
 
 	p := &Plan{
-		Policies: []Policy{&SyncPolicy{}},
-		Current:  current,
-		Desired:  desired,
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
 	}
 
 	changes := p.Calculate().Changes
@@ -156,9 +258,10 @@ func (suite *PlanTestSuite) TestSyncSecondRoundMigration() {
 	expectedDelete := []*endpoint.Endpoint{}
 
 	p := &Plan{
-		Policies: []Policy{&SyncPolicy{}},
-		Current:  current,
-		Desired:  desired,
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
 	}
 
 	changes := p.Calculate().Changes
@@ -177,9 +280,81 @@ func (suite *PlanTestSuite) TestSyncSecondRoundWithTTLChange() {
 	expectedDelete := []*endpoint.Endpoint{}
 
 	p := &Plan{
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestSyncSecondRoundWithProviderSpecificChange() {
+	current := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificTrue}
+	desired := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificFalse}
+	expectedCreate := []*endpoint.Endpoint{}
+	expectedUpdateOld := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificTrue}
+	expectedUpdateNew := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificFalse}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestSyncSecondRoundWithProviderSpecificDefaultFalse() {
+	current := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificFalse}
+	desired := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificUnset}
+	expectedCreate := []*endpoint.Endpoint{}
+	expectedUpdateOld := []*endpoint.Endpoint{}
+	expectedUpdateNew := []*endpoint.Endpoint{}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
 		Policies: []Policy{&SyncPolicy{}},
 		Current:  current,
 		Desired:  desired,
+		PropertyComparator: func(name, previous, current string) bool {
+			return CompareBoolean(false, name, previous, current)
+		},
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestSyncSecondRoundWithProviderSpecificDefualtTrue() {
+	current := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificTrue}
+	desired := []*endpoint.Endpoint{suite.bar127AWithProviderSpecificUnset}
+	expectedCreate := []*endpoint.Endpoint{}
+	expectedUpdateOld := []*endpoint.Endpoint{}
+	expectedUpdateNew := []*endpoint.Endpoint{}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
+		Policies: []Policy{&SyncPolicy{}},
+		Current:  current,
+		Desired:  desired,
+		PropertyComparator: func(name, previous, current string) bool {
+			return CompareBoolean(true, name, previous, current)
+		},
 	}
 
 	changes := p.Calculate().Changes
@@ -208,9 +383,10 @@ func (suite *PlanTestSuite) TestSyncSecondRoundWithOwnerInherited() {
 	expectedDelete := []*endpoint.Endpoint{}
 
 	p := &Plan{
-		Policies: []Policy{&SyncPolicy{}},
-		Current:  current,
-		Desired:  desired,
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
 	}
 
 	changes := p.Calculate().Changes
@@ -250,6 +426,50 @@ func (suite *PlanTestSuite) TestDifferentTypes() {
 	expectedDelete := []*endpoint.Endpoint{}
 
 	p := &Plan{
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestIgnoreTXT() {
+	current := []*endpoint.Endpoint{suite.fooV2TXT}
+	desired := []*endpoint.Endpoint{suite.fooV2Cname}
+	expectedCreate := []*endpoint.Endpoint{suite.fooV2Cname}
+	expectedUpdateOld := []*endpoint.Endpoint{}
+	expectedUpdateNew := []*endpoint.Endpoint{}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestIgnoreTargetCase() {
+	current := []*endpoint.Endpoint{suite.fooV2Cname}
+	desired := []*endpoint.Endpoint{suite.fooV2CnameUppercase}
+	expectedCreate := []*endpoint.Endpoint{}
+	expectedUpdateOld := []*endpoint.Endpoint{}
+	expectedUpdateNew := []*endpoint.Endpoint{}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
 		Policies: []Policy{&SyncPolicy{}},
 		Current:  current,
 		Desired:  desired,
@@ -271,9 +491,10 @@ func (suite *PlanTestSuite) TestRemoveEndpoint() {
 	expectedDelete := []*endpoint.Endpoint{suite.bar192A}
 
 	p := &Plan{
-		Policies: []Policy{&SyncPolicy{}},
-		Current:  current,
-		Desired:  desired,
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
 	}
 
 	changes := p.Calculate().Changes
@@ -292,9 +513,10 @@ func (suite *PlanTestSuite) TestRemoveEndpointWithUpsert() {
 	expectedDelete := []*endpoint.Endpoint{}
 
 	p := &Plan{
-		Policies: []Policy{&UpsertOnlyPolicy{}},
-		Current:  current,
-		Desired:  desired,
+		Policies:       []Policy{&UpsertOnlyPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
 	}
 
 	changes := p.Calculate().Changes
@@ -314,9 +536,10 @@ func (suite *PlanTestSuite) TestDuplicatedEndpointsForSameResourceReplace() {
 	expectedDelete := []*endpoint.Endpoint{suite.bar192A}
 
 	p := &Plan{
-		Policies: []Policy{&SyncPolicy{}},
-		Current:  current,
-		Desired:  desired,
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
 	}
 
 	changes := p.Calculate().Changes
@@ -328,6 +551,7 @@ func (suite *PlanTestSuite) TestDuplicatedEndpointsForSameResourceReplace() {
 
 //TODO: remove once multiple-target per endpoint is supported
 func (suite *PlanTestSuite) TestDuplicatedEndpointsForSameResourceRetain() {
+
 	current := []*endpoint.Endpoint{suite.fooV1Cname, suite.bar192A}
 	desired := []*endpoint.Endpoint{suite.fooV1Cname, suite.fooV3CnameSameResource}
 	expectedCreate := []*endpoint.Endpoint{}
@@ -336,9 +560,104 @@ func (suite *PlanTestSuite) TestDuplicatedEndpointsForSameResourceRetain() {
 	expectedDelete := []*endpoint.Endpoint{suite.bar192A}
 
 	p := &Plan{
-		Policies: []Policy{&SyncPolicy{}},
-		Current:  current,
-		Desired:  desired,
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestMultipleRecordsSameNameDifferentSetIdentifier() {
+
+	current := []*endpoint.Endpoint{suite.multiple1}
+	desired := []*endpoint.Endpoint{suite.multiple2, suite.multiple3}
+	expectedCreate := []*endpoint.Endpoint{suite.multiple3}
+	expectedUpdateOld := []*endpoint.Endpoint{suite.multiple1}
+	expectedUpdateNew := []*endpoint.Endpoint{suite.multiple2}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestSetIdentifierUpdateCreatesAndDeletes() {
+
+	current := []*endpoint.Endpoint{suite.multiple2}
+	desired := []*endpoint.Endpoint{suite.multiple3}
+	expectedCreate := []*endpoint.Endpoint{suite.multiple3}
+	expectedUpdateOld := []*endpoint.Endpoint{}
+	expectedUpdateNew := []*endpoint.Endpoint{}
+	expectedDelete := []*endpoint.Endpoint{suite.multiple2}
+
+	p := &Plan{
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestDomainFiltersInitial() {
+
+	current := []*endpoint.Endpoint{suite.domainFilterExcluded}
+	desired := []*endpoint.Endpoint{suite.domainFilterExcluded, suite.domainFilterFiltered1, suite.domainFilterFiltered2, suite.domainFilterFiltered3}
+	expectedCreate := []*endpoint.Endpoint{suite.domainFilterFiltered1, suite.domainFilterFiltered2, suite.domainFilterFiltered3}
+	expectedUpdateOld := []*endpoint.Endpoint{}
+	expectedUpdateNew := []*endpoint.Endpoint{}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		DomainFilter:   endpoint.NewDomainFilterWithExclusions([]string{"domain.tld"}, []string{"ex.domain.tld"}),
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
+	}
+
+	changes := p.Calculate().Changes
+	validateEntries(suite.T(), changes.Create, expectedCreate)
+	validateEntries(suite.T(), changes.UpdateNew, expectedUpdateNew)
+	validateEntries(suite.T(), changes.UpdateOld, expectedUpdateOld)
+	validateEntries(suite.T(), changes.Delete, expectedDelete)
+}
+
+func (suite *PlanTestSuite) TestDomainFiltersUpdate() {
+
+	current := []*endpoint.Endpoint{suite.domainFilterExcluded, suite.domainFilterFiltered1, suite.domainFilterFiltered2}
+	desired := []*endpoint.Endpoint{suite.domainFilterExcluded, suite.domainFilterFiltered1, suite.domainFilterFiltered2, suite.domainFilterFiltered3}
+	expectedCreate := []*endpoint.Endpoint{suite.domainFilterFiltered3}
+	expectedUpdateOld := []*endpoint.Endpoint{}
+	expectedUpdateNew := []*endpoint.Endpoint{}
+	expectedDelete := []*endpoint.Endpoint{}
+
+	p := &Plan{
+		Policies:       []Policy{&SyncPolicy{}},
+		Current:        current,
+		Desired:        desired,
+		DomainFilter:   endpoint.NewDomainFilterWithExclusions([]string{"domain.tld"}, []string{"ex.domain.tld"}),
+		ManagedRecords: []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
 	}
 
 	changes := p.Calculate().Changes
@@ -359,54 +678,188 @@ func validateEntries(t *testing.T, entries, expected []*endpoint.Endpoint) {
 	}
 }
 
-func TestSanitizeDNSName(t *testing.T) {
+func TestNormalizeDNSName(t *testing.T) {
 	records := []struct {
 		dnsName string
 		expect  string
 	}{
 		{
 			"3AAAA.FOO.BAR.COM    ",
-			"3aaaa.foo.bar.com",
+			"3aaaa.foo.bar.com.",
 		},
 		{
-			"   example.foo.com",
-			"example.foo.com",
+			"   example.foo.com.",
+			"example.foo.com.",
 		},
 		{
 			"example123.foo.com ",
-			"example123.foo.com",
+			"example123.foo.com.",
 		},
 		{
 			"foo",
-			"foo",
+			"foo.",
 		},
 		{
 			"123foo.bar",
-			"123foo.bar",
+			"123foo.bar.",
 		},
 		{
 			"foo.com",
-			"foo.com",
+			"foo.com.",
+		},
+		{
+			"foo.com.",
+			"foo.com.",
 		},
 		{
 			"foo123.COM",
-			"foo123.com",
+			"foo123.com.",
 		},
 		{
 			"my-exaMple3.FOO.BAR.COM",
-			"my-example3.foo.bar.com",
+			"my-example3.foo.bar.com.",
 		},
 		{
 			"   my-example1214.FOO-1235.BAR-foo.COM   ",
-			"my-example1214.foo-1235.bar-foo.com",
+			"my-example1214.foo-1235.bar-foo.com.",
 		},
 		{
 			"my-example-my-example-1214.FOO-1235.BAR-foo.COM",
-			"my-example-my-example-1214.foo-1235.bar-foo.com",
+			"my-example-my-example-1214.foo-1235.bar-foo.com.",
 		},
 	}
 	for _, r := range records {
-		gotName := sanitizeDNSName(r.dnsName)
+		gotName := normalizeDNSName(r.dnsName)
 		assert.Equal(t, r.expect, gotName)
+	}
+}
+
+func TestShouldUpdateProviderSpecific(tt *testing.T) {
+	comparator := func(name, previous, current string) bool {
+		return previous == current
+	}
+	for _, test := range []struct {
+		name               string
+		current            *endpoint.Endpoint
+		desired            *endpoint.Endpoint
+		propertyComparator func(name, previous, current string) bool
+		shouldUpdate       bool
+	}{
+		{
+			name: "skip AWS target health",
+			current: &endpoint.Endpoint{
+				DNSName: "foo.com",
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "aws/evaluate-target-health", Value: "true"},
+				},
+			},
+			desired: &endpoint.Endpoint{
+				DNSName: "bar.com",
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "aws/evaluate-target-health", Value: "true"},
+				},
+			},
+			propertyComparator: comparator,
+			shouldUpdate:       false,
+		},
+		{
+			name: "custom property unchanged",
+			current: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "custom/property", Value: "true"},
+				},
+			},
+			desired: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "custom/property", Value: "true"},
+				},
+			},
+			propertyComparator: comparator,
+			shouldUpdate:       false,
+		},
+		{
+			name: "custom property value changed",
+			current: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "custom/property", Value: "true"},
+				},
+			},
+			desired: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "custom/property", Value: "false"},
+				},
+			},
+			propertyComparator: comparator,
+			shouldUpdate:       true,
+		},
+		{
+			name: "custom property key changed",
+			current: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "custom/property", Value: "true"},
+				},
+			},
+			desired: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "new/property", Value: "true"},
+				},
+			},
+			propertyComparator: comparator,
+			shouldUpdate:       true,
+		},
+		{
+			name: "desired has same key and value as current but not comparator is set",
+			current: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "custom/property", Value: "true"},
+				},
+			},
+			desired: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "custom/property", Value: "true"},
+				},
+			},
+			shouldUpdate: false,
+		},
+		{
+			name: "desired has same key and different value as current but not comparator is set",
+			current: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "custom/property", Value: "true"},
+				},
+			},
+			desired: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "custom/property", Value: "false"},
+				},
+			},
+			shouldUpdate: true,
+		},
+		{
+			name: "desired has different key from current but not comparator is set",
+			current: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "custom/property", Value: "true"},
+				},
+			},
+			desired: &endpoint.Endpoint{
+				ProviderSpecific: []endpoint.ProviderSpecificProperty{
+					{Name: "new/property", Value: "true"},
+				},
+			},
+			shouldUpdate: true,
+		},
+	} {
+		tt.Run(test.name, func(t *testing.T) {
+			plan := &Plan{
+				Current:            []*endpoint.Endpoint{test.current},
+				Desired:            []*endpoint.Endpoint{test.desired},
+				PropertyComparator: test.propertyComparator,
+				ManagedRecords:     []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
+			}
+			b := plan.shouldUpdateProviderSpecific(test.desired, test.current)
+			assert.Equal(t, test.shouldUpdate, b)
+
+		})
 	}
 }

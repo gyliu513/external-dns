@@ -17,11 +17,12 @@ limitations under the License.
 package registry
 
 import (
+	"context"
 	"errors"
 
-	"github.com/kubernetes-incubator/external-dns/endpoint"
-	"github.com/kubernetes-incubator/external-dns/plan"
-	"github.com/kubernetes-incubator/external-dns/provider"
+	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/plan"
+	"sigs.k8s.io/external-dns/provider"
 )
 
 // AWSSDRegistry implements registry interface with ownership information associated via the Description field of SD Service
@@ -41,10 +42,14 @@ func NewAWSSDRegistry(provider provider.Provider, ownerID string) (*AWSSDRegistr
 	}, nil
 }
 
+func (sdr *AWSSDRegistry) GetDomainFilter() endpoint.DomainFilterInterface {
+	return sdr.provider.GetDomainFilter()
+}
+
 // Records calls AWS SD API and expects AWS SD provider to provider Owner/Resource information as a serialized
 // value in the AWSSDDescriptionLabel value in the Labels map
-func (sdr *AWSSDRegistry) Records() ([]*endpoint.Endpoint, error) {
-	records, err := sdr.provider.Records()
+func (sdr *AWSSDRegistry) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
+	records, err := sdr.provider.Records(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +69,7 @@ func (sdr *AWSSDRegistry) Records() ([]*endpoint.Endpoint, error) {
 
 // ApplyChanges filters out records not owned the External-DNS, additionally it adds the required label
 // inserted in the AWS SD instance as a CreateID field
-func (sdr *AWSSDRegistry) ApplyChanges(changes *plan.Changes) error {
+func (sdr *AWSSDRegistry) ApplyChanges(ctx context.Context, changes *plan.Changes) error {
 	filteredChanges := &plan.Changes{
 		Create:    changes.Create,
 		UpdateNew: filterOwnedRecords(sdr.ownerID, changes.UpdateNew),
@@ -77,12 +82,24 @@ func (sdr *AWSSDRegistry) ApplyChanges(changes *plan.Changes) error {
 	sdr.updateLabels(filteredChanges.UpdateOld)
 	sdr.updateLabels(filteredChanges.Delete)
 
-	return sdr.provider.ApplyChanges(filteredChanges)
+	return sdr.provider.ApplyChanges(ctx, filteredChanges)
 }
 
 func (sdr *AWSSDRegistry) updateLabels(endpoints []*endpoint.Endpoint) {
 	for _, ep := range endpoints {
+		if ep.Labels == nil {
+			ep.Labels = make(map[string]string)
+		}
 		ep.Labels[endpoint.OwnerLabelKey] = sdr.ownerID
 		ep.Labels[endpoint.AWSSDDescriptionLabel] = ep.Labels.Serialize(false)
 	}
+}
+
+func (sdr *AWSSDRegistry) PropertyValuesEqual(name string, previous string, current string) bool {
+	return sdr.provider.PropertyValuesEqual(name, previous, current)
+}
+
+// AdjustEndpoints modifies the endpoints as needed by the specific provider
+func (sdr *AWSSDRegistry) AdjustEndpoints(endpoints []*endpoint.Endpoint) []*endpoint.Endpoint {
+	return sdr.provider.AdjustEndpoints(endpoints)
 }

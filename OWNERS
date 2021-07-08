@@ -1,13 +1,15 @@
 # See the OWNERS file documentation:
-#  https://github.com/kubernetes/kubernetes/blob/master/docs/devel/owners.md
+#  https://github.com/kubernetes/community/blob/HEAD/contributors/guide/owners.md
 
 approvers:
-  - justinsb
-  - hjacobs
   - raffo
-  - linki
-  - ideahitme
-  - chrislovecnm
-  - kris-nova
-  - iterion
   - njuettner
+
+reviewers:
+  - njuettner
+  - raffo
+  - seanmalloy
+
+emeritus_approvers:
+  - hjacobs
+  - linki

@@ -96,13 +96,16 @@ Then apply one of the following manifests file to deploy ExternalDNS.
 
 ### Manifest (for clusters without RBAC enabled)
 ```yaml
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: external-dns
 spec:
   strategy:
     type: Recreate
+  selector:
+    matchLabels:
+      app: external-dns
   template:
     metadata:
       labels:
@@ -110,14 +113,14 @@ spec:
     spec:
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:latest
+        image: k8s.gcr.io/external-dns/external-dns:v0.7.6
         args:
         - --source=service
         - --source=ingress
         - --domain-filter=external-dns-test.com # will make ExternalDNS see only the hosted zones matching provided domain, omit to process all available hosted zones
         - --provider=alibabacloud
         - --policy=upsert-only # would prevent ExternalDNS from deleting any records, omit to enable full synchronization
-        - --alibaba-cloud-zone=public # only look at public hosted zones (valid values are public, private or no value for both)
+        - --alibaba-cloud-zone-type=public # only look at public hosted zones (valid values are public, private or no value for both)
         - --registry=txt
         - --txt-owner-id=my-identifier
         volumeMounts:
@@ -138,25 +141,22 @@ kind: ServiceAccount
 metadata:
   name: external-dns
 ---
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: external-dns
 rules:
 - apiGroups: [""]
-  resources: ["services"]
+  resources: ["services","endpoints","pods"]
   verbs: ["get","watch","list"]
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get","watch","list"]
-- apiGroups: ["extensions"] 
+- apiGroups: ["extensions","networking.k8s.io"]
   resources: ["ingresses"] 
   verbs: ["get","watch","list"]
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["list"]
 ---
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: external-dns-viewer
@@ -169,13 +169,16 @@ subjects:
   name: external-dns
   namespace: default
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: external-dns
 spec:
   strategy:
     type: Recreate
+  selector:
+    matchLabels:
+      app: external-dns
   template:
     metadata:
       labels:
@@ -184,7 +187,7 @@ spec:
       serviceAccountName: external-dns
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:latest
+        image: k8s.gcr.io/external-dns/external-dns:v0.7.6
         args:
         - --source=service
         - --source=ingress
@@ -194,6 +197,7 @@ spec:
         - --alibaba-cloud-zone-type=public # only look at public hosted zones (valid values are public, private or no value for both)
         - --registry=txt
         - --txt-owner-id=my-identifier
+        - --alibaba-cloud-config-file= # enable sts token 
         volumeMounts:
         - mountPath: /usr/share/zoneinfo
           name: hostpath
@@ -210,9 +214,9 @@ spec:
 
 This list is not the full list, but a few arguments that where chosen.
 
-### alibabacloud-zone-type
+### alibaba-cloud-zone-type
 
-`alibabacloud-zone-type` allows filtering for private and public zones
+`alibaba-cloud-zone-type` allows filtering for private and public zones
 
 * If value is `public`, it will sync with records in Alibaba Cloud DNS Service
 * If value is `private`, it will sync with records in Alibaba Cloud Private Zone Service
@@ -225,7 +229,7 @@ Create an ingress resource manifest file.
 > For ingress objects ExternalDNS will create a DNS record based on the host specified for the ingress object.
 
 ```yaml
-apiVersion: extensions/v1beta1
+apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: foo
@@ -265,11 +269,14 @@ spec:
 
 ---
 
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nginx
 spec:
+  selector:
+    matchLabels:
+      app: nginx
   template:
     metadata:
       labels:
@@ -286,7 +293,7 @@ spec:
 After roughly two minutes check that a corresponding DNS record for your service was created.
 
 ```console
-$ aliyun aliyun alidns DescribeDomainRecords --DomainName=external-dns-test.com
+$ aliyun alidns DescribeDomainRecords --DomainName=external-dns-test.com
 {
   "PageNumber": 1,
   "TotalCount": 1,
@@ -379,3 +386,5 @@ Give ExternalDNS some time to clean up the DNS records for you. Then delete the 
 ```console
 $ aliyun alidns DeleteDomain --DomainName external-dns-test.com
 ```
+
+For more info about Alibaba Cloud external dns, please refer this [docs](https://yq.aliyun.com/articles/633412)

@@ -16,30 +16,45 @@ limitations under the License.
 
 package source
 
-import "github.com/kubernetes-incubator/external-dns/endpoint"
+import (
+	"context"
+
+	"sigs.k8s.io/external-dns/endpoint"
+)
 
 // multiSource is a Source that merges the endpoints of its nested Sources.
 type multiSource struct {
-	children []Source
+	children       []Source
+	defaultTargets []string
 }
 
 // Endpoints collects endpoints of all nested Sources and returns them in a single slice.
-func (ms *multiSource) Endpoints() ([]*endpoint.Endpoint, error) {
+func (ms *multiSource) Endpoints(ctx context.Context) ([]*endpoint.Endpoint, error) {
 	result := []*endpoint.Endpoint{}
 
 	for _, s := range ms.children {
-		endpoints, err := s.Endpoints()
+		endpoints, err := s.Endpoints(ctx)
 		if err != nil {
 			return nil, err
 		}
-
+		if len(ms.defaultTargets) > 0 {
+			for i := range endpoints {
+				endpoints[i].Targets = ms.defaultTargets
+			}
+		}
 		result = append(result, endpoints...)
 	}
 
 	return result, nil
 }
 
+func (ms *multiSource) AddEventHandler(ctx context.Context, handler func()) {
+	for _, s := range ms.children {
+		s.AddEventHandler(ctx, handler)
+	}
+}
+
 // NewMultiSource creates a new multiSource.
-func NewMultiSource(children []Source) Source {
-	return &multiSource{children: children}
+func NewMultiSource(children []Source, defaultTargets []string) Source {
+	return &multiSource{children: children, defaultTargets: defaultTargets}
 }

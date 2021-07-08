@@ -4,7 +4,7 @@
 
 The provider has been written for and tested against [PowerDNS](https://github.com/PowerDNS/pdns) v4.1.x and thus requires **PowerDNS Auth Server >= 4.1.x**
 
-PowerDNS provider support was added via [this PR](https://github.com/kubernetes-incubator/external-dns/pull/373), thus you need to use external-dns version >= v0.5
+PowerDNS provider support was added via [this PR](https://github.com/kubernetes-sigs/external-dns/pull/373), thus you need to use external-dns version >= v0.5
 
 The PDNS provider expects that your PowerDNS instance is already setup and
 functional. It expects that zones, you wish to add records to, already exist
@@ -15,8 +15,7 @@ anyway.
 
 The PDNS provider currently does not support:
 
-1. Dry running a configuration is not supported.
-2. The `--domain-filter` flag is not supported.
+* Dry running a configuration is not supported
 
 ## Deployment
 
@@ -24,13 +23,16 @@ Deploying external DNS for PowerDNS is actually nearly identical to deploying
 it for other providers. This is what a sample `deployment.yaml` looks like:
 
 ```yaml
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: deploy-external-dns
+  name: external-dns
 spec:
   strategy:
     type: Recreate
+  selector:
+    matchLabels:
+      app: external-dns
   template:
     metadata:
       labels:
@@ -40,16 +42,26 @@ spec:
       # serviceAccountName: external-dns
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:latest
+        image: k8s.gcr.io/external-dns/external-dns:v0.7.6
         args:
         - --source=service # or ingress or both
         - --provider=pdns
         - --pdns-server={{ pdns-api-url }}
         - --pdns-api-key={{ pdns-http-api-key }}
         - --txt-owner-id={{ owner-id-for-this-external-dns }}
+        - --domain-filter=external-dns-test.my-org.com # will make ExternalDNS see only the zones matching provided domain; omit to process all available zones in PowerDNS
         - --log-level=debug
         - --interval=30s
 ```
+
+#### Domain Filter (`--domain-filter`)
+When the `--domain-filter` argument is specified, external-dns will only create DNS records for host names (specified in ingress objects and services with the external-dns annotation) related to zones that match the `--domain-filter` argument in the external-dns deployment manifest.
+
+eg. ```--domain-filter=example.org``` will allow for zone `example.org` and any zones in PowerDNS that ends in `.example.org`, including `an.example.org`, ie. the subdomains of example.org.
+
+eg. ```--domain-filter=.example.org``` will allow *only* zones that end in `.example.org`, ie. the subdomains of example.org but not the `example.org` zone itself.
+
+The filter can also match parent zones. For example `--domain-filter=a.example.com` will allow for zone `example.com`. If you want to match parent zones, you cannot pre-pend your filter with a ".", eg. `--domain-filter=.example.com` will not attempt to match parent zones.
 
 ## RBAC
 
@@ -60,15 +72,15 @@ kind: ServiceAccount
 metadata:
   name: external-dns
 ---
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: external-dns
 rules:
 - apiGroups: [""]
-  resources: ["services"]
+  resources: ["services","endpoints","pods"]
   verbs: ["get","watch","list"]
-- apiGroups: ["extensions"]
+- apiGroups: ["extensions","networking.k8s.io"]
   resources: ["ingresses"]
   verbs: ["get","watch","list"]
 - apiGroups: [""]
@@ -78,7 +90,7 @@ rules:
   resources: ["nodes"]
   verbs: ["list"]
 ---
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: external-dns-viewer
@@ -99,11 +111,14 @@ subjects:
 Spin up a simple "Hello World" HTTP server with the following spec (`kubectl apply -f`):
 
 ```yaml
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: echo
 spec:
+  selector:
+    matchLabels:
+      app: echo
   template:
     metadata:
       labels:
@@ -142,7 +157,7 @@ $ kubectl get services echo
 $ kubectl get endpoints echo
 ```
 
-Make sure everything looks correct, i.e the service is defined and recieves a
+Make sure everything looks correct, i.e the service is defined and receives a
 public IP, and that the endpoint also has a pod IP.
 
 Once that's done, wait about 30s-1m (interval for external-dns to kick in), then do:

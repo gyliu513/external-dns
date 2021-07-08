@@ -17,34 +17,94 @@ limitations under the License.
 package controller
 
 import (
+	"context"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/kubernetes-incubator/external-dns/plan"
-	"github.com/kubernetes-incubator/external-dns/registry"
-	"github.com/kubernetes-incubator/external-dns/source"
+	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/plan"
+	"sigs.k8s.io/external-dns/provider"
+	"sigs.k8s.io/external-dns/registry"
+	"sigs.k8s.io/external-dns/source"
 )
 
 var (
-	registryErrors = prometheus.NewCounter(
+	registryErrorsTotal = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "registry_errors_total",
-			Help: "Number of Registry errors.",
+			Namespace: "external_dns",
+			Subsystem: "registry",
+			Name:      "errors_total",
+			Help:      "Number of Registry errors.",
 		},
 	)
-	sourceErrors = prometheus.NewCounter(
+	sourceErrorsTotal = prometheus.NewCounter(
 		prometheus.CounterOpts{
-			Name: "source_errors_total",
-			Help: "Number of Source errors.",
+			Namespace: "external_dns",
+			Subsystem: "source",
+			Name:      "errors_total",
+			Help:      "Number of Source errors.",
+		},
+	)
+	sourceEndpointsTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "external_dns",
+			Subsystem: "source",
+			Name:      "endpoints_total",
+			Help:      "Number of Endpoints in all sources",
+		},
+	)
+	registryEndpointsTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "external_dns",
+			Subsystem: "registry",
+			Name:      "endpoints_total",
+			Help:      "Number of Endpoints in the registry",
+		},
+	)
+	lastSyncTimestamp = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "external_dns",
+			Subsystem: "controller",
+			Name:      "last_sync_timestamp_seconds",
+			Help:      "Timestamp of last successful sync with the DNS provider",
+		},
+	)
+	controllerNoChangesTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "external_dns",
+			Subsystem: "controller",
+			Name:      "no_op_runs_total",
+			Help:      "Number of reconcile loops ending up with no changes on the DNS provider side.",
+		},
+	)
+	deprecatedRegistryErrors = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem: "registry",
+			Name:      "errors_total",
+			Help:      "Number of Registry errors.",
+		},
+	)
+	deprecatedSourceErrors = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Subsystem: "source",
+			Name:      "errors_total",
+			Help:      "Number of Source errors.",
 		},
 	)
 )
 
 func init() {
-	prometheus.MustRegister(registryErrors)
-	prometheus.MustRegister(sourceErrors)
+	prometheus.MustRegister(registryErrorsTotal)
+	prometheus.MustRegister(sourceErrorsTotal)
+	prometheus.MustRegister(sourceEndpointsTotal)
+	prometheus.MustRegister(registryEndpointsTotal)
+	prometheus.MustRegister(lastSyncTimestamp)
+	prometheus.MustRegister(deprecatedRegistryErrors)
+	prometheus.MustRegister(deprecatedSourceErrors)
+	prometheus.MustRegister(controllerNoChangesTotal)
 }
 
 // Controller is responsible for orchestrating the different components.
@@ -52,7 +112,7 @@ func init() {
 // * Ask the DNS provider for current list of endpoints.
 // * Ask the Source for the desired list of endpoints.
 // * Take both lists and calculate a Plan to move current towards desired state.
-// * Tell the DNS provider to apply the changes calucated by the Plan.
+// * Tell the DNS provider to apply the changes calculated by the Plan.
 type Controller struct {
 	Source   source.Source
 	Registry registry.Registry
@@ -60,50 +120,97 @@ type Controller struct {
 	Policy plan.Policy
 	// The interval between individual synchronizations
 	Interval time.Duration
+	// The DomainFilter defines which DNS records to keep or exclude
+	DomainFilter endpoint.DomainFilterInterface
+	// The nextRunAt used for throttling and batching reconciliation
+	nextRunAt time.Time
+	// The nextRunAtMux is for atomic updating of nextRunAt
+	nextRunAtMux sync.Mutex
+	// DNS record types that will be considered for management
+	ManagedRecordTypes []string
+	// MinEventSyncInterval is used as window for batching events
+	MinEventSyncInterval time.Duration
 }
 
 // RunOnce runs a single iteration of a reconciliation loop.
-func (c *Controller) RunOnce() error {
-	records, err := c.Registry.Records()
+func (c *Controller) RunOnce(ctx context.Context) error {
+	records, err := c.Registry.Records(ctx)
 	if err != nil {
-		registryErrors.Inc()
+		registryErrorsTotal.Inc()
+		deprecatedRegistryErrors.Inc()
 		return err
 	}
+	registryEndpointsTotal.Set(float64(len(records)))
 
-	endpoints, err := c.Source.Endpoints()
+	ctx = context.WithValue(ctx, provider.RecordsContextKey, records)
+
+	endpoints, err := c.Source.Endpoints(ctx)
 	if err != nil {
-		sourceErrors.Inc()
+		sourceErrorsTotal.Inc()
+		deprecatedSourceErrors.Inc()
 		return err
 	}
+	sourceEndpointsTotal.Set(float64(len(endpoints)))
+
+	endpoints = c.Registry.AdjustEndpoints(endpoints)
 
 	plan := &plan.Plan{
-		Policies: []plan.Policy{c.Policy},
-		Current:  records,
-		Desired:  endpoints,
+		Policies:           []plan.Policy{c.Policy},
+		Current:            records,
+		Desired:            endpoints,
+		DomainFilter:       endpoint.MatchAllDomainFilters{c.DomainFilter, c.Registry.GetDomainFilter()},
+		PropertyComparator: c.Registry.PropertyValuesEqual,
+		ManagedRecords:     []string{endpoint.RecordTypeA, endpoint.RecordTypeCNAME},
 	}
 
 	plan = plan.Calculate()
 
-	err = c.Registry.ApplyChanges(plan.Changes)
-	if err != nil {
-		registryErrors.Inc()
-		return err
+	if plan.Changes.HasChanges() {
+		err = c.Registry.ApplyChanges(ctx, plan.Changes)
+		if err != nil {
+			registryErrorsTotal.Inc()
+			deprecatedRegistryErrors.Inc()
+			return err
+		}
+	} else {
+		controllerNoChangesTotal.Inc()
+		log.Info("All records are already up to date")
 	}
+
+	lastSyncTimestamp.SetToCurrentTime()
 	return nil
 }
 
-// Run runs RunOnce in a loop with a delay until stopChan receives a value.
-func (c *Controller) Run(stopChan <-chan struct{}) {
-	ticker := time.NewTicker(c.Interval)
+// ScheduleRunOnce makes sure execution happens at most once per interval.
+func (c *Controller) ScheduleRunOnce(now time.Time) {
+	c.nextRunAtMux.Lock()
+	defer c.nextRunAtMux.Unlock()
+	c.nextRunAt = now.Add(c.MinEventSyncInterval)
+}
+
+func (c *Controller) ShouldRunOnce(now time.Time) bool {
+	c.nextRunAtMux.Lock()
+	defer c.nextRunAtMux.Unlock()
+	if now.Before(c.nextRunAt) {
+		return false
+	}
+	c.nextRunAt = now.Add(c.Interval)
+	return true
+}
+
+// Run runs RunOnce in a loop with a delay until context is canceled
+func (c *Controller) Run(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		err := c.RunOnce()
-		if err != nil {
-			log.Error(err)
+		if c.ShouldRunOnce(time.Now()) {
+			if err := c.RunOnce(ctx); err != nil {
+				log.Error(err)
+			}
 		}
 		select {
 		case <-ticker.C:
-		case <-stopChan:
+		case <-ctx.Done():
 			log.Info("Terminating main controller loop")
 			return
 		}

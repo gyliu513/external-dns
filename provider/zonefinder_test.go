@@ -23,12 +23,12 @@ import (
 )
 
 func TestZoneIDName(t *testing.T) {
-	z := zoneIDName{}
+	z := ZoneIDName{}
 	z.Add("123456", "foo.bar")
 	z.Add("123456", "qux.baz")
 	z.Add("654321", "foo.qux.baz")
 
-	assert.Equal(t, zoneIDName{
+	assert.Equal(t, ZoneIDName{
 		"123456": "qux.baz",
 		"654321": "foo.qux.baz",
 	}, z)
@@ -45,6 +45,11 @@ func TestZoneIDName(t *testing.T) {
 
 	// no possible zone for entry
 	zoneID, zoneName = z.FindZone("name.qux.foo")
+	assert.Equal(t, "", zoneName)
+	assert.Equal(t, "", zoneID)
+
+	// no possible zone for entry of a substring to valid a zone
+	zoneID, zoneName = z.FindZone("nomatch-foo.bar")
 	assert.Equal(t, "", zoneName)
 	assert.Equal(t, "", zoneID)
 

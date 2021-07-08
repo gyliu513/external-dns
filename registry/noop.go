@@ -17,9 +17,11 @@ limitations under the License.
 package registry
 
 import (
-	"github.com/kubernetes-incubator/external-dns/endpoint"
-	"github.com/kubernetes-incubator/external-dns/plan"
-	"github.com/kubernetes-incubator/external-dns/provider"
+	"context"
+
+	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/plan"
+	"sigs.k8s.io/external-dns/provider"
 )
 
 // NoopRegistry implements registry interface without ownership directly propagating changes to dns provider
@@ -34,12 +36,26 @@ func NewNoopRegistry(provider provider.Provider) (*NoopRegistry, error) {
 	}, nil
 }
 
+func (im *NoopRegistry) GetDomainFilter() endpoint.DomainFilterInterface {
+	return im.provider.GetDomainFilter()
+}
+
 // Records returns the current records from the dns provider
-func (im *NoopRegistry) Records() ([]*endpoint.Endpoint, error) {
-	return im.provider.Records()
+func (im *NoopRegistry) Records(ctx context.Context) ([]*endpoint.Endpoint, error) {
+	return im.provider.Records(ctx)
 }
 
 // ApplyChanges propagates changes to the dns provider
-func (im *NoopRegistry) ApplyChanges(changes *plan.Changes) error {
-	return im.provider.ApplyChanges(changes)
+func (im *NoopRegistry) ApplyChanges(ctx context.Context, changes *plan.Changes) error {
+	return im.provider.ApplyChanges(ctx, changes)
+}
+
+// PropertyValuesEqual compares two property values for equality
+func (im *NoopRegistry) PropertyValuesEqual(attribute string, previous string, current string) bool {
+	return im.provider.PropertyValuesEqual(attribute, previous, current)
+}
+
+// AdjustEndpoints modifies the endpoints as needed by the specific provider
+func (im *NoopRegistry) AdjustEndpoints(endpoints []*endpoint.Endpoint) []*endpoint.Endpoint {
+	return im.provider.AdjustEndpoints(endpoints)
 }

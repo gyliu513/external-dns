@@ -2,32 +2,38 @@
 
 This tutorial describes how to setup ExternalDNS for usage in conjunction with a Headless service.
 
-## Usecases
+## Use cases
 The main use cases that inspired this feature is the necessity for fixed addressable hostnames with services, such as Kafka when trying to access them from outside the cluster. In this scenario, quite often, only the Node IP addresses are actually routable and as in systems like Kafka more direct connections are preferable.
 
 ## Setup
 
 We will go through a small example of deploying a simple Kafka with use of a headless service.
 
-### Exernal DNS
+### External DNS
 
 A simple deploy could look like this:
 ### Manifest (for clusters without RBAC enabled)
 ```yaml
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: exeternal-dns
+  name: external-dns
 spec:
   strategy:
     type: Recreate
+  selector:
+    matchLabels:
+      app: external-dns
   template:
+    metadata:
+      labels:
+        app: external-dns
     spec:
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:latest
+        image: k8s.gcr.io/external-dns/external-dns:v0.7.6
         args:
-        - --debug
+        - --log-level=debug
         - --source=service
         - --source=ingress
         - --namespace=dev
@@ -44,25 +50,22 @@ kind: ServiceAccount
 metadata:
   name: external-dns
 ---
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: external-dns
 rules:
 - apiGroups: [""]
-  resources: ["services"]
+  resources: ["services","endpoints","pods"]
   verbs: ["get","watch","list"]
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get","watch","list"]
-- apiGroups: ["extensions"] 
+- apiGroups: ["extensions","networking.k8s.io"]
   resources: ["ingresses"] 
   verbs: ["get","watch","list"]
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["list"]
 ---
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: external-dns-viewer
@@ -75,21 +78,27 @@ subjects:
   name: external-dns
   namespace: default
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: exeternal-dns
+  name: external-dns
 spec:
   strategy:
     type: Recreate
+  selector:
+    matchLabels:
+      app: external-dns
   template:
+    metadata:
+      labels:
+        app: external-dns
     spec:
       serviceAccountName: external-dns
       containers:
       - name: external-dns
-        image: registry.opensource.zalan.do/teapot/external-dns:latest
+        image: k8s.gcr.io/external-dns/external-dns:v0.7.6
         args:
-        - --debug
+        - --log-level=debug
         - --source=service
         - --source=ingress
         - --namespace=dev
@@ -102,7 +111,7 @@ spec:
 
 ### Kafka Stateful Set
 
-First lets deploy a Kafka Stateful set, a simple example(a lot of stuff is missing) with a headless service called `kafka-hsvc`
+First lets deploy a Kafka Stateful set, a simple example(a lot of stuff is missing) with a headless service called `ksvc`
 
 ```yaml
 apiVersion: apps/v1beta1
@@ -146,7 +155,7 @@ spec:
         requests:
           storage:  500Gi
 ```
-Very important here, is to set the `hostport`(only works if the PodSecurityPolicy allows it)! and in case your app requires an actual hostname inside the container, unlike Kafka, which can advertise on another address, you have to set the hostname yourself.
+Very important here, is to set the `hostPort`(only works if the PodSecurityPolicy allows it)! and in case your app requires an actual hostname inside the container, unlike Kafka, which can advertise on another address, you have to set the hostname yourself.
 
 ### Headless Service
 
@@ -179,7 +188,7 @@ kafka-1.example.org
 kafka-2.example.org
 ```
 
-If you set `--fqdn-template={{name}}.example.org` you can ommit the annotation.
+If you set `--fqdn-template={{name}}.example.org` you can omit the annotation.
 Generally it is a better approach to use  `--fqdn-template={{name}}.example.org`, because then
 you would get the service name inside the generated A records:
 

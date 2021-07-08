@@ -17,10 +17,11 @@ limitations under the License.
 package source
 
 import (
+	"context"
 	"testing"
 
-	"github.com/kubernetes-incubator/external-dns/endpoint"
-	"github.com/kubernetes-incubator/external-dns/internal/testutils"
+	"sigs.k8s.io/external-dns/endpoint"
+	"sigs.k8s.io/external-dns/internal/testutils"
 )
 
 // Validates that dedupSource is a Source
@@ -97,7 +98,7 @@ func testDedupEndpoints(t *testing.T) {
 			// Create our object under test and get the endpoints.
 			source := NewDedupSource(mockSource)
 
-			endpoints, err := source.Endpoints()
+			endpoints, err := source.Endpoints(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
